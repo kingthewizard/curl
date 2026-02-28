@@ -1,0 +1,127 @@
+name: Build libcurl for Android ARM64 with Debug Symbols
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-android-arm64:
+    runs-on: ubuntu-latest
+    
+    env:
+      ANDROID_NDK_VERSION: "r25c"
+      ANDROID_API_LEVEL: "21"
+      ANDROID_ABI: "arm64-v8a"
+      CMAKE_BUILD_TYPE: "Debug"
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+          add-to-path: true
+
+      - name: Install CMake
+        uses: cmake-ci/cmake-action@v1
+        with:
+          cmake-version: '3.25.x'
+
+      - name: Create build directory
+        run: mkdir -p build-android-arm64
+
+      - name: Configure with CMake
+        working-directory: build-android-arm64
+        run: |
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=${{ env.CMAKE_BUILD_TYPE }} \
+            -DCMAKE_TOOLCHAIN_FILE=${{ env.ANDROID_NDK_HOME }}/build/cmake/android.cmake \
+            -DANDROID_ABI=${{ env.ANDROID_ABI }} \
+            -DANDROID_PLATFORM=android-${{ env.ANDROID_API_LEVEL }} \
+            -DANDROID_STL=c++_shared \
+            -DBUILD_SHARED_LIBS=ON \
+            -DCMAKE_CXX_FLAGS_DEBUG="-g -O0" \
+            -DCMAKE_C_FLAGS_DEBUG="-g -O0" \
+            -DENABLE_DEBUG_SYMBOLS=ON \
+            -DCURL_DISABLE_TESTS=ON
+
+      - name: Build
+        working-directory: build-android-arm64
+        run: |
+          cmake --build . --config ${{ env.CMAKE_BUILD_TYPE }} --verbose
+
+      - name: Generate debug symbols
+        working-directory: build-android-arm64
+        run: |
+          # Find all compiled libraries
+          find . -name "*.so" -o -name "*.a" | while read lib; do
+            echo "Extracting debug symbols from: $lib"
+            ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip --keep-symbol="*" "$lib"
+          done
+          
+          # Create debug symbols directory
+          mkdir -p debug-symbols
+          
+          # Copy libraries with symbols
+          find . -name "*.so" -o -name "*.a" | xargs -I {} cp {} debug-symbols/
+
+      - name: Create stripped binaries
+        working-directory: build-android-arm64
+        run: |
+          mkdir -p stripped-libs
+          find . -name "*.so" | while read lib; do
+            stripped_lib="stripped-libs/$(basename "$lib")"
+            cp "$lib" "$stripped_lib"
+            ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip "$stripped_lib"
+          done
+
+      - name: Package build artifacts
+        working-directory: build-android-arm64
+        run: |
+          tar -czf ../libcurl-android-arm64-debug.tar.gz \
+            debug-symbols/ \
+            stripped-libs/ \
+            lib/ \
+            include/
+          
+          # Create separate debug symbols package
+          tar -czf ../libcurl-android-arm64-symbols.tar.gz debug-symbols/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcurl-android-arm64-build
+          path: |
+            libcurl-android-arm64-debug.tar.gz
+            libcurl-android-arm64-symbols.tar.gz
+          retention-days: 30
+
+      - name: Create release (if tagged)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            libcurl-android-arm64-debug.tar.gz
+            libcurl-android-arm64-symbols.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build summary
+        run: |
+          echo "## Android ARM64 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target**: Android ARM64 (arm64-v8a)" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Level**: ${{ env.ANDROID_API_LEVEL }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Type**: ${{ env.CMAKE_BUILD_TYPE }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **NDK Version**: ${{ env.ANDROID_NDK_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Debug Symbols**: Included" >> $GITHUB_STEP_SUMMARY
