@@ -38,8 +38,6 @@ jobs:
 
       - name: Install CMake
         uses: threeal/cmake-action@v2.1.0
-        with:
-          cmake-version: '3.25.1'
 
       - name: Create build directory
         run: mkdir -p build-android-arm64
