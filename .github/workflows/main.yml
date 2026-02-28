@@ -37,7 +37,7 @@ jobs:
           add-to-path: true
 
       - name: Install CMake
-        uses: cmake-ci/cmake-action@v1
+        uses: threeal/cmake-action@v2.1.0
         with:
           cmake-version: '3.25.1'
 
